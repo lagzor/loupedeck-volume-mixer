@@ -1,0 +1,89 @@
+# Bygger pluginet och gör ett installationspaket (.lplug4).
+#
+# Pluginet byggs mot PluginApi.dll från Loupedecks egen installation, så
+# workflowen installerar senaste Loupedeck-programvaran på byggmaskinen först.
+#
+# Körs vid varje push till main och kan startas för hand under Actions.
+# Paketet hamnar som artifact på körningen och, vid push till main, som en
+# release med versionsnummer.
+
+name: Bygg paket
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: windows-latest
+    timeout-minutes: 30
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Installera Loupedeck (för PluginApi.dll)
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $fallback = 'https://loupedeck-support.devops.logitech.io/hubfs/Knowledge%20Base/LD%20Software%20Downloads/6.4.1/LoupedeckInstaller_6.4.1.364.exe'
+          $url = $fallback
+          try {
+            $page = (Invoke-WebRequest -Uri 'https://www.loupedeck.com/setup/' -UseBasicParsing -TimeoutSec 30).Content
+            $hits = [regex]::Matches($page, 'https://[^"''\s<>]+/LoupedeckInstaller_(\d+(?:\.\d+)+)\.exe')
+            if ($hits.Count) {
+              $url = ($hits | Sort-Object { [version]$_.Groups[1].Value } -Descending | Select-Object -First 1).Value
+            }
+          } catch { Write-Host "Kunde inte läsa setup-sidan, använder $fallback" }
+          Write-Host "Laddar ner $url"
+          Invoke-WebRequest -Uri $url -OutFile "$env:RUNNER_TEMP\LoupedeckInstaller.exe" -UseBasicParsing
+          $p = Start-Process -FilePath "$env:RUNNER_TEMP\LoupedeckInstaller.exe" -ArgumentList '/quiet', '/norestart' -PassThru
+          # Installeraren startar tjänster i bakgrunden; vänta tills PluginApi.dll finns.
+          $dll = 'C:\Program Files\Logi\LogiPluginService\PluginApi.dll'
+          $deadline = (Get-Date).AddMinutes(15)
+          while (-not (Test-Path $dll) -and (Get-Date) -lt $deadline) { Start-Sleep -Seconds 10 }
+          if (-not (Test-Path $dll)) {
+            Get-ChildItem 'C:\Program Files\Logi' -Recurse -Filter PluginApi.dll -ErrorAction SilentlyContinue | Select-Object -First 5 | ForEach-Object { $_.FullName }
+            throw "Hittade inte $dll efter installationen."
+          }
+          Write-Host "PluginApi.dll: $((Get-Item $dll).VersionInfo.FileVersion)"
+
+      - name: Bygg
+        shell: pwsh
+        run: dotnet build .\src\DeviceVolumeMixerPlugin.csproj -c Release -p:SkipLink=true
+
+      - name: Paketera
+        id: pkg
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $yaml = Get-Content .\src\package\metadata\LoupedeckPackage.yaml -Raw
+          $base = if ($yaml -match '(?m)^version:\s*([0-9.]+)') { $Matches[1] } else { '1.0' }
+          $version = "$base.$env:GITHUB_RUN_NUMBER"
+          New-Item -ItemType Directory -Force -Path out | Out-Null
+          $zip = "out\DeviceVolumeMixer.zip"
+          Compress-Archive -Path .\bin\Release\* -DestinationPath $zip -Force
+          Move-Item $zip out\DeviceVolumeMixer.lplug4 -Force
+          "version=$version" >> $env:GITHUB_OUTPUT
+          Write-Host "Paket: out\DeviceVolumeMixer.lplug4 ($version)"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: DeviceVolumeMixer-${{ steps.pkg.outputs.version }}
+          path: out/DeviceVolumeMixer.lplug4
+
+      - name: Skapa release
+        if: github.event_name == 'push'
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $v = "${{ steps.pkg.outputs.version }}"
+          gh release create "v$v" out\DeviceVolumeMixer.lplug4 --title "Device Volume Mixer $v" --notes "Byggd från $env:GITHUB_SHA." --latest
