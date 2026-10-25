@@ -1,0 +1,29 @@
+# Package type. Must be plugin4 for plugins.
+type: plugin4
+
+# Unique plugin id (must not end with "Plugin").
+name: DeviceVolumeMixer
+
+displayName: Device Volume Mixer
+
+description: Control volume and mute for individual audio devices (e.g. only the speakers), switch the default device, and control per-app volume.
+
+pluginFileName: DeviceVolumeMixerPlugin.dll
+
+version: 1.0
+
+author: Ludwig Bergvall
+
+copyright: Copyright © 2026 Ludwig Bergvall
+
+license: MIT
+licenseUrl: https://opensource.org/licenses/MIT
+
+minimumLoupedeckVersion: 6.4
+
+# Windows only (uses Windows Core Audio).
+pluginFolderWin: bin
+
+supportedDevices:
+    - LoupedeckCtFamily
+    - LoupedeckExtendedFamily

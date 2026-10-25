@@ -1,0 +1,54 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>disable</Nullable>
+    <LangVersion>latest</LangVersion>
+    <RootNamespace>Loupedeck.DeviceVolumeMixerPlugin</RootNamespace>
+    <AssemblyName>DeviceVolumeMixerPlugin</AssemblyName>
+    <Version>1.0.0</Version>
+
+    <AppendTargetFrameworkToOutputPath>false</AppendTargetFrameworkToOutputPath>
+    <CopyLocalLockFileAssemblies>true</CopyLocalLockFileAssemblies>
+    <GenerateDocumentationFile>false</GenerateDocumentationFile>
+
+    <!-- Where Logi Plugin Service (Loupedeck 6+/Options+) keeps PluginApi.dll. Override with -p:PluginApiDir=... -->
+    <PluginApiDir Condition="'$(PluginApiDir)' == ''">C:\Program Files\Logi\LogiPluginService\</PluginApiDir>
+    <PluginDir>$(LocalAppData)\Logi\LogiPluginService\Plugins\</PluginDir>
+
+    <BaseOutputPath>$([System.IO.Path]::GetFullPath('$(MSBuildThisFileDirectory)..\bin\'))</BaseOutputPath>
+    <OutputPath>$(BaseOutputPath)$(Configuration)\bin\</OutputPath>
+
+    <PluginShortName>DeviceVolumeMixer</PluginShortName>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Reference Include="PluginApi">
+      <HintPath>$(PluginApiDir)PluginApi.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+  </ItemGroup>
+
+  <!-- Copies metadata (LoupedeckPackage.yaml + icon) next to the bin folder, i.e. the plugin package layout. -->
+  <Target Name="CopyPackage" AfterTargets="PostBuildEvent">
+    <ItemGroup>
+      <PackageFiles Include="package\**\*" />
+    </ItemGroup>
+    <Copy SourceFiles="@(PackageFiles)" DestinationFolder="$(OutputPath)..\%(RecursiveDir)" />
+  </Target>
+
+  <!-- Tells Logi Plugin Service where to load the plugin from, then asks it to reload the plugin. -->
+  <Target Name="LinkPlugin" AfterTargets="CopyPackage" Condition="'$(OS)' == 'Windows_NT' And '$(SkipLink)' != 'true'">
+    <MakeDir Directories="$(PluginDir)" />
+    <WriteLinesToFile File="$(PluginDir)$(MSBuildProjectName).link" Lines="$(BaseOutputPath)$(Configuration)\" Overwrite="true" />
+    <Message Text="Plugin link: $(PluginDir)$(MSBuildProjectName).link" Importance="High" />
+    <Exec Command="start loupedeck:plugin/$(PluginShortName)/reload" ContinueOnError="true" />
+  </Target>
+
+  <Target Name="UnlinkPlugin" AfterTargets="CoreClean" Condition="'$(OS)' == 'Windows_NT'">
+    <Delete Files="$(PluginDir)$(MSBuildProjectName).link" />
+    <RemoveDir Directories="$(OutputPath)..\" />
+  </Target>
+
+</Project>
